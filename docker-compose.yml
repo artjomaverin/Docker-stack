@@ -1,0 +1,204 @@
+version: '3'
+services:
+  traefik:
+    image: traefik
+    container_name: traefik
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "./traefik/traefik.toml:/traefik.toml"
+      - "./traefik/acme.json:/acme.json"
+    labels:
+      - "traefik.port=8080"
+      - "traefik.frontend.rule=Host:lab.javydekoning.com"  
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+  
+  portainer:
+    container_name: portainer
+    image: portainer/portainer:latest
+    restart: unless-stopped
+    ports: 
+      - "9000:9000"
+    labels:
+      - "traefik.port=9000"
+      - "traefik.frontend.rule=Host:portainer.lab.javydekoning.com"
+    volumes:
+      - ./portainer:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  homeassistant:
+    container_name: home-assistant
+    image: homeassistant/home-assistant:latest
+    restart: unless-stopped
+    ports: 
+      - "8123:8123"   #web frontend
+      - "8300:8300"   #hue emulation
+      - "51826:51826" #homekit 
+    labels:
+      - "traefik.port=8123"
+      - "traefik.frontend.rule=Host:hass.lab.javydekoning.com"
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
+      - ./homeassistant/config:/config
+
+  rutorrent:
+    container_name: rutorrent
+    image: diameter/rtorrent-rutorrent:latest
+    restart: unless-stopped
+    ports: 
+      - "8080:8080" 
+      - "49160:49160/udp" 
+      - "49161:49161"
+    labels:
+      - "traefik.frontend.rule=Host:rutorrent.lab.javydekoning.com"  
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+    volumes: 
+      - ./downloads:/downloads 
+
+  nfs:
+    container_name: nfs
+    image: fuzzle/docker-nfs-server:latest
+    restart: unless-stopped
+    ports:
+      - "111:111"
+      - "111:111/udp"
+      - "2049:2049"
+      - "2029:2049/udp"
+      - "32765:32765"
+      - "32765:32765/udp"
+      - "32766:32766"
+      - "32766:32766/udp"
+      - "32767:32767"
+      - "32767:32767/udp"
+    environment:
+      - 'NFS_EXPORT_DIR_1=/nfs'
+      - 'NFS_EXPORT_DOMAIN_1=*'
+      - 'NFS_EXPORT_OPTIONS_1=ro,insecure,no_subtree_check,no_root_squash,fsid=1'
+    volumes:
+      - ./downloads:/nfs
+    privileged: true
+    labels: 
+      - "traefik.enable=false"
+
+  sonarr:
+    container_name: sonarr
+    image: linuxserver/sonarr:latest
+    restart: unless-stopped
+    ports:
+      - "8989:8989"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./sonarrconfig:/config
+      - ./downloads:/downloads
+    labels:
+      - "traefik.port=8989"
+      - "traefik.frontend.rule=Host:sonarr.lab.javydekoning.com"  
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+
+  radarr:
+    container_name: radarr
+    image: linuxserver/radarr:latest
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    labels:
+      - "traefik.port=7878"
+      - "traefik.frontend.rule=Host:radarr.lab.javydekoning.com"  
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro 
+      - ./downloads:/downloads
+      - ./radarrconfig:/config:rw
+
+  prometheus:
+    container_name: prometheus 
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - 9090:9090
+    labels:
+      - "traefik.port=9090"
+      - "traefik.frontend.rule=Host:prometheus.lab.javydekoning.com"  
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention=365d'
+      - '--storage.tsdb.path=/etc/prometheus/tsdb'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+  node-exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command: 
+      - '--path.procfs=/host/proc' 
+      - '--path.sysfs=/host/sys'
+      - --collector.filesystem.ignored-mount-points
+      - "^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)"
+    labels: 
+      - "traefik.enable=false"
+
+  cadvisor:
+    container_name: cadvisor
+    image: google/cadvisor:latest
+    restart: unless-stopped
+    labels:
+      - "traefik.port=8080"
+      - "traefik.frontend.rule=Host:cadadvisor.lab.javydekoning.com"    
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    labels:
+      - "traefik.port=3000"
+      - "traefik.frontend.rule=Host:grafana.lab.javydekoning.com"        
+    volumes:
+      - ./grafana:/var/lib/grafana
+
+  emby:
+    image: emby/embyserver
+    container_name: emby
+    ports:
+      - 8096:8096
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./embyserver:/config
+      - ./downloads:/downloads
+    labels:
+      - "traefik.port=8096"
+      - "traefik.frontend.rule=Host:emby.lab.javydekoning.com"   
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
+      - AUTO_UPDATES_ON=true
+
+  nodered:
+    image: nodered/node-red-docker
+    container_name: nodered
+    ports: 
+      - 1880:1880
+    volumes:
+      - ./nodered:/data
+    labels:
+      - "traefik.port=1880"
+      - "traefik.frontend.rule=Host:nodered.lab.javydekoning.com"
+      - "traefik.frontend.auth.basic=jdekoning:$$2y$$13$$A.W.AfXyBLMB7Zewm9FTQuyAEjFaIalu4VQk3EQmD2BJlZ99oOo02"
